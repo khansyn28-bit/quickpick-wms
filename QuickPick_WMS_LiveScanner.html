@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QuickPick WMS - Live Scanner</title>
+<style>
+body{font-family:Arial,sans-serif;margin:0;background:#f3f4f6;color:#111}
+header{background:#111;color:#fff;padding:16px;font-size:21px;font-weight:700}
+main{max-width:720px;margin:auto;padding:12px}
+.card{background:#fff;border-radius:14px;padding:15px;margin:10px 0;box-shadow:0 2px 9px #0001}
+button,input,select{font-size:16px;padding:12px;border-radius:9px;border:1px solid #ccc}
+button{font-weight:700}.full{width:100%;margin-top:8px}.black{background:#111;color:#fff}.green{background:#168747;color:#fff}.red{background:#c62828;color:#fff}
+.tabs{display:flex;gap:6px;background:#fff;padding:8px}.tabs button{flex:1;border:0}.active{background:#111;color:#fff}
+.hide{display:none}.item{border:1px solid #ddd;border-radius:10px;padding:12px;margin:7px 0}
+.ok{color:#168747}.bad{color:#c62828}.big{text-align:center;font-size:23px;font-weight:800;padding:10px}
+#reader{width:100%;margin-top:10px}.note{font-size:13px;color:#666}
+table{width:100%;border-collapse:collapse}td,th{padding:7px;border-bottom:1px solid #ddd;text-align:left}
+</style>
+</head>
+<body>
+<header>QuickPick WMS<br><span style="font-size:12px;color:#bbb">Live barcode scanner</span></header>
+<div class="tabs">
+<button id="b1" class="active" onclick="tab('pick')">Pick</button>
+<button id="b2" onclick="tab('products')">Products</button>
+<button id="b3" onclick="tab('orders')">Orders</button>
+</div>
+<main>
+<section id="pick">
+<div class="card"><b>Current Order</b><select id="ordersel" class="full" onchange="loadOrder()"></select></div>
+<div id="orderbox" class="card hide"></div>
+<div id="scanbox" class="card hide">
+<b>Live barcode scanner</b>
+<p class="note">Tap Start Camera. Keep the barcode inside the scanning box. No photo is required.</p>
+<div id="reader"></div>
+<button class="black full" onclick="startLive()">📷 START CAMERA</button>
+<button class="red full" onclick="stopLive()">STOP CAMERA</button>
+<input id="barcode" class="full" placeholder="Or type barcode manually">
+<button class="black full" onclick="check()">Check Barcode</button>
+<div id="result" class="big"></div>
+</div>
+</section>
+
+<section id="products" class="hide">
+<div class="card"><h3>Add Product</h3>
+<input id="pn" class="full" placeholder="Product name">
+<input id="pb" class="full" placeholder="Barcode">
+<input id="pm" class="full" placeholder="MRP" type="number">
+<input id="pl" class="full" placeholder="Bin e.g. MLE-M-6-C-2">
+<button class="black full" onclick="saveProduct()">Save Product</button>
+</div>
+<div class="card"><h3>Product Master</h3><div id="plist"></div></div>
+</section>
+
+<section id="orders" class="hide">
+<div class="card"><h3>Create Order</h3>
+<input id="on" class="full" placeholder="Order number">
+<div id="lines"></div>
+<button onclick="addLine()">+ Add item</button>
+<button class="black full" onclick="saveOrder()">Save Order</button>
+</div>
+<div class="card"><h3>Orders</h3><div id="olist"></div></div>
+</section>
+</main>
+
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script>
+const K='qpwms_live_v2';
+let db=JSON.parse(localStorage.getItem(K)||'null')||{
+ products:[
+ {name:'OXYLIFE MEN BLEACH 150GM',barcode:'',mrp:160,bin:'MLE-M-6-C-2'},
+ {name:'OXYLIFE DETAN CREAM 48GM',barcode:'',mrp:199,bin:'MLE-M-6-C-3'},
+ {name:'FEM DIAMOND KIT',barcode:'',mrp:1490,bin:'MLE-M-6-C-4'},
+ {name:'FEM GOLD KIT',barcode:'',mrp:1490,bin:'MLE-M-6-C-5'},
+ {name:'DABUR GULABARI 400ML',barcode:'',mrp:149,bin:'MLE-M-6-C-6'},
+ {name:'DABUR GULABARI 120ML',barcode:'',mrp:54,bin:'MLE-M-6-C-7'},
+ {name:'OXY LIPOSOLUBLE WAX WHITE CHOCO 800G',barcode:'',mrp:1500,bin:'MLE-M-6-C-8'}
+ ],orders:[]
+};
+let scanner=null, lastCode='', lastAt=0;
+
+function save(){localStorage.setItem(K,JSON.stringify(db))}
+function esc(x){return String(x||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function tab(t){
+ ['pick','products','orders'].forEach(x=>document.getElementById(x).classList.toggle('hide',x!==t));
+ document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));
+ document.getElementById({pick:'b1',products:'b2',orders:'b3'}[t]).classList.add('active');
+ if(t==='products')renderProducts(); if(t==='orders')renderOrders(); if(t==='pick')renderSelect();
+}
+function renderSelect(){ordersel.innerHTML='<option value="">Select order</option>'+db.orders.map((o,i)=>`<option value="${i}">${esc(o.number)}</option>`).join('')}
+function renderProducts(){plist.innerHTML='<table><tr><th>Product</th><th>Barcode</th><th>Bin</th></tr>'+db.products.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.barcode||'NOT SET')}</td><td>${esc(p.bin)}</td></tr>`).join('')+'</table>'}
+function saveProduct(){
+ if(!pn.value.trim()||!pb.value.trim()){alert('Product name and barcode are required');return}
+ db.products.push({name:pn.value.trim(),barcode:pb.value.trim(),mrp:+pm.value||0,bin:pl.value.trim()});
+ save();pn.value=pb.value=pm.value=pl.value='';renderProducts();alert('Saved');
+}
+function addLine(){
+ let d=document.createElement('div');d.className='item';
+ d.innerHTML=`<select class="lp">${db.products.map((p,i)=>`<option value="${i}">${esc(p.name)} | ${p.barcode||'NO BARCODE'}</option>`).join('')}</select>
+ <input class="lq" type="number" min="1" value="1" style="width:70px">`;
+ lines.appendChild(d);
+}
+function saveOrder(){
+ if(!on.value.trim()){alert('Order number required');return}
+ let ls=[...document.querySelectorAll('#lines .item')].map(d=>{
+   let p=db.products[d.querySelector('.lp').value];
+   return {...p,qty:+d.querySelector('.lq').value||1,scanned:0};
+ }).filter(x=>x.qty>0);
+ if(!ls.length){alert('Add item');return}
+ db.orders.push({number:on.value.trim(),lines:ls,status:'open'});save();
+ on.value='';lines.innerHTML='';renderSelect();alert('Order created');tab('pick');
+}
+function renderOrders(){olist.innerHTML=db.orders.length?'<table><tr><th>Order</th><th>Status</th></tr>'+db.orders.map(o=>`<tr><td>${esc(o.number)}</td><td>${o.status}</td></tr>`).join('')+'</table>':'No orders'}
+async function loadOrder(){
+ await stopLive();
+ let i=ordersel.value;
+ if(i===''){orderbox.classList.add('hide');scanbox.classList.add('hide');return}
+ let o=db.orders[i];orderbox.classList.remove('hide');scanbox.classList.remove('hide');
+ orderbox.innerHTML='<b>Order #'+esc(o.number)+'</b>'+o.lines.map(l=>`<div class="item"><b>${esc(l.name)}</b><br>Qty: ${l.qty} | Picked: ${l.scanned} | Bin: ${esc(l.bin)}</div>`).join('')+
+ '<button class="green full" onclick="complete()">Complete Order</button>';
+ result.textContent='';
+}
+async function startLive(){
+ if(!ordersel.value){alert('Select an order first');return}
+ if(typeof Html5Qrcode==='undefined'){alert('Scanner library did not load. You need internet.');return}
+ await stopLive();
+ scanner=new Html5Qrcode('reader');
+ try{
+   await scanner.start({facingMode:{exact:'environment'}},
+     {fps:12,qrbox:{width:280,height:140},aspectRatio:1.777},
+     code=>onScanned(code),
+     ()=>{});
+ }catch(e){
+   try{
+     await scanner.start({facingMode:'environment'},
+       {fps:12,qrbox:{width:280,height:140}},
+       code=>onScanned(code),()=>{});
+   }catch(err){
+     alert('Camera cannot start here. Open this page from an HTTPS website (not a downloaded file) and allow camera permission.');
+   }
+ }
+}
+async function stopLive(){
+ if(scanner){try{await scanner.stop()}catch(e){}try{scanner.clear()}catch(e){}scanner=null}
+}
+function onScanned(code){
+ let now=Date.now();
+ if(code===lastCode && now-lastAt<1500)return;
+ lastCode=code;lastAt=now;
+ barcode.value=code;check();
+}
+function check(){
+ let code=barcode.value.trim();barcode.value='';
+ let o=db.orders[ordersel.value];
+ if(!o||!code)return;
+ let p=db.products.find(x=>x.barcode===code);
+ let l=o.lines.find(x=>x.barcode===code&&x.scanned<x.qty);
+ if(!p||!l){
+   result.textContent='❌ WRONG PRODUCT';result.className='big bad';navigator.vibrate?.([100,70,100]);return;
+ }
+ l.scanned++;save();
+ result.textContent='✓ RIGHT PRODUCT';result.className='big ok';navigator.vibrate?.(80);
+ loadOrder();
+}
+function complete(){
+ let o=db.orders[ordersel.value];
+ if(!o.lines.every(l=>l.scanned>=l.qty)){alert('Some items are still missing');return}
+ o.status='complete';save();alert('Order completed');
+}
+renderProducts();renderSelect();addLine();
+</script>
+</body></html>
